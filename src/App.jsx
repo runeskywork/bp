@@ -59,6 +59,7 @@ const KPI = [['매출', 'sales'], ['순매출', 'net'], ['인건비', 'labor'], 
 const FS_URL = 'https://firestore.googleapis.com/v1/projects/biz-plan-1022/databases/(default)/documents/biz/latest';
 const FS_URL_INV = 'https://firestore.googleapis.com/v1/projects/biz-plan-1022/databases/(default)/documents/inv/latest';
 const INV_BENCHMARK = 2.0;
+const INV_COLORS = { 전체: '#c8a96a', CIGA: '#5b8def', AIRAIN: '#e5675c', SHER: '#6fb59a', Blackout: '#9b8bd6', '업계 평균': '#39ff8f' };
 
 /* 막대 위 금액 표시 (기존 차트용) */
 const valueLabels = {
@@ -234,7 +235,6 @@ function trailing30(weeks, key) {
 const yMan = () => ({ ticks: { callback: man } });
 const zeroGrid = () => ({ color: c => c.tick && c.tick.value === 0 ? '#3a3d44' : '#17191c' });
 const tipWon = () => ({ callbacks: { label: c => ` ${c.dataset.label}  ${won(c.parsed.y)}` } });
-const legendLine = { labels: { boxWidth: 12, boxHeight: 1.5, usePointStyle: true, pointStyle: 'line' } };
 
 function draw(s, inv) {
   const list = [];
@@ -275,7 +275,7 @@ function draw(s, inv) {
       { label: '매출', data: s.months.map(m => m.sales), borderColor: COL.green, backgroundColor: COL.green, pointBackgroundColor: COL.green, borderWidth: 2, tension: .3 },
       { label: '순매출', data: s.months.map(m => m.net), borderColor: COL.gold, backgroundColor: COL.gold, pointBackgroundColor: COL.gold, borderWidth: 2, tension: .3 },
     ] },
-    options: { plugins: { legend: legendLine, tooltip: tipWon() },
+    options: { plugins: { legend: { display: false }, tooltip: tipWon() },
       scales: { x: { grid: { display: false } }, y: yMan() } },
   });
 
@@ -370,7 +370,7 @@ function draw(s, inv) {
     });
   }
 
-  // BUSINESS 탭 — 재고자산 회전율 (브랜드별 + 전체 + 업계평균, 선 끝에 값 표시, 재고 0/비정상 구간은 끊김)
+  // BUSINESS 탭 — 재고자산 회전율 (Chart.js 기본 범례 끔 — 범례는 아래 HTML 버튼으로 별도 렌더링)
   if (inv && inv.months && inv.months.length) {
     const brandColors = ['#5b8def', '#e5675c', '#6fb59a', '#9b8bd6', '#d79a5a'];
     const ds = [
@@ -387,7 +387,7 @@ function draw(s, inv) {
       type: 'line',
       data: { labels: inv.months.map(m => m.label), datasets: ds },
       options: {
-        plugins: { legend: legendLine, tooltip: { callbacks: { label: c => c.parsed.y == null ? ` ${c.dataset.label}  재고 없음` : ` ${c.dataset.label}  ${c.parsed.y.toFixed(2)}회` } } },
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => c.parsed.y == null ? ` ${c.dataset.label}  재고 없음` : ` ${c.dataset.label}  ${c.parsed.y.toFixed(2)}회` } } },
         scales: { x: { grid: { display: false } }, y: { min: 0, max: 3, ticks: { callback: v => v + '회' } } },
         layout: { padding: { right: 48 } },
       },
@@ -405,6 +405,7 @@ function App() {
   const [inv, setInv] = useState(null);
   const [msg, setMsg] = useState('불러오는 중...');
   const [off, setOff] = useState([]);
+  const [invOff, setInvOff] = useState([]);
   const charts = useRef([]);
 
   useEffect(() => {
@@ -427,6 +428,7 @@ function App() {
     charts.current.forEach(c => c.destroy());
     charts.current = draw(view, inv);
     setOff([]);
+    setInvOff([]);
     return () => charts.current.forEach(c => c.destroy());
   }, [view, inv]);
 
@@ -445,11 +447,26 @@ function App() {
     setOff([]);
   };
 
+  const toggleInv = n => {
+    const ch = Chart.getChart('cInvByBrand'); if (!ch) return;
+    const i = ch.data.datasets.findIndex(d => d.label === n); if (i < 0) return;
+    const visible = ch.isDatasetVisible(i);
+    ch.setDatasetVisibility(i, !visible); ch.update();
+    setInvOff(prev => visible ? [...prev, n] : prev.filter(x => x !== n));
+  };
+  const showAllInv = () => {
+    const ch = Chart.getChart('cInvByBrand'); if (!ch) return;
+    ch.data.datasets.forEach((_, i) => ch.setDatasetVisibility(i, true)); ch.update();
+    setInvOff([]);
+  };
+
   const cur = view?.months.at(-1), prev = view?.months.at(-2);
   const vis = t => (tab === t ? '' : 'hidden');
   const pieTotal = m => m ? m.units.filter(u => u.net > 0).reduce((a, u) => a + u.net, 0) : 0;
   const range = m => m ? `${m.weeks[0].period.split('~')[0]} ~ ${m.weeks.at(-1).period.split('~')[1]}` : '';
   const latestInv = inv && inv.months && inv.months.length ? inv.months.at(-1) : null;
+  const invLegendItems = inv ? ['전체', ...inv.brands, `업계 평균(${INV_BENCHMARK.toFixed(1)}회)`] : [];
+  const invLegendColor = n => n.startsWith('업계 평균') ? COL.green : (INV_COLORS[n] || '#5b8def');
 
   return (
     <>
@@ -547,6 +564,14 @@ function App() {
                 {latestInv && (
                   <div className="card wide">
                     <h2><span className="invbig">{latestInv.turnover != null ? latestInv.turnover.toFixed(1) + '회' : '—'}</span>재고자산 회전율 — 브랜드별 <span>와치베이(구매일 기준) · 업계 평균 {INV_BENCHMARK.toFixed(1)}회</span></h2>
+                    <div className="lg">
+                      <button className="all" onClick={showAllInv}>전체</button>
+                      {invLegendItems.map(n => (
+                        <button key={n} className={invOff.includes(n) ? 'off' : ''} onClick={() => toggleInv(n)}>
+                          <i style={{ background: invLegendColor(n) }} />{n}
+                        </button>
+                      ))}
+                    </div>
                     <canvas id="cInvByBrand" />
                     <div className="invnote">재고자산 회전율은 지금 보유한 재고가 전부 팔리는 데 걸리는 기간을 뜻합니다. 연 1회전이면 재고 전체가 소진되는 데 약 1년, 연 2회전이면 약 6개월이 걸린다는 의미입니다. 숫자가 높을수록 재고가 빠르게 소진된다는 의미입니다. 보유 재고가 없는 구간은 선이 끊겨 표시됩니다.</div>
                   </div>
