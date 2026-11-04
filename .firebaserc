@@ -1,0 +1,8 @@
+{
+  "projects": {
+    "default": "we-bp-plan",
+    "prod": "biz-plan-1022"
+  },
+  "targets": {},
+  "etags": {}
+}
