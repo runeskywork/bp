@@ -41,6 +41,7 @@ main{max-width:1440px;margin:0 auto;padding:22px 32px 40px}
 .lg button.all{color:var(--gold);border-color:rgba(200,169,106,.45)}
 .lghint{text-align:right;color:var(--mute);font-size:10.5px;margin:6px 0 8px}
 .pies{display:grid;grid-template-columns:1fr 1fr;gap:8px;text-align:center}
+.pies h3{margin:4px 0 10px;font-size:12.5px;font-weight:600;color:var(--txt)}
 .pies p{color:var(--sub);margin:8px 0 0;font-size:11px}
 .stamp{color:var(--mute);text-align:right;font-size:10px;margin-top:16px}
 .invbig{font-size:12px;font-weight:600;color:var(--txt);margin-right:6px}
@@ -51,6 +52,7 @@ main{max-width:1440px;margin:0 auto;padding:22px 32px 40px}
 /* ================= 공통 ================= */
 const COL = { gold: '#c8a96a', goldDark: '#6e5d3c', green: '#39ff8f', up: '#e5675c', down: '#5b8def', labor: '#4b5262', exp: '#7d8594', prev: '#34373e', text: '#e8e9eb', sub: '#a7abb2' };
 const PAL = ['#c8a96a','#5b8def','#e5675c','#6fb59a','#9b8bd6','#d79a5a','#5fb3c7','#c7849e','#8fa36b','#7d828a','#b39578','#a9adb3'];
+const MONTH_GRAYS = ['#5c6170', '#7d828a', '#4b5262', '#a7abb2'];   // 전전월 이전 달 막대 색
 const colorOf = (names, n) => PAL[names.indexOf(n) % PAL.length];
 const won = v => Math.round(v).toLocaleString('ko-KR');
 const man = v => Math.round(v / 1e4).toLocaleString('ko-KR') + '만';
@@ -211,8 +213,16 @@ function summarize(d) {
     m.weeks.push(w);
     w.units.forEach((u, i) => { m.units[i].net += u.net; m.units[i].profit += u.profit; });
   });
+
+  /* 전월누계: 당월을 뺀 모든 달의 사업아이템별 순매출 합계 (예: 11월이면 9월~10월) */
+  const before = months.slice(0, -1);
+  const prevCum = before.length ? {
+    range: before.length > 1 ? `${before[0].label}~${before.at(-1).label}` : before[0].label,
+    units: d.unitNames.map((n, i) => ({ name: n, net: before.reduce((a, m) => a + m.units[i].net, 0) })),
+  } : null;
+
   const trendUnits = d.unitNames.filter((n, i) => done.some(w => w.units[i].net > 0));
-  return { done, pending, months, unitNames: d.unitNames, trendUnits, t: d.t };
+  return { done, pending, months, prevCum, unitNames: d.unitNames, trendUnits, t: d.t };
 }
 
 /* ================= 그래프 ================= */
@@ -236,11 +246,14 @@ const yMan = () => ({ ticks: { callback: man } });
 const zeroGrid = () => ({ color: c => c.tick && c.tick.value === 0 ? '#3a3d44' : '#17191c' });
 const tipWon = () => ({ callbacks: { label: c => ` ${c.dataset.label}  ${won(c.parsed.y)}` } });
 
+/* 사업아이템별 손익 막대 색: 당월 금색, 전월 진회색, 그 이전 달은 회색 계열 */
+const monthBarColor = (i, n) => i === n - 1 ? COL.gold : i === n - 2 ? COL.prev : MONTH_GRAYS[(n - 3 - i) % MONTH_GRAYS.length];
+
 function draw(s, inv) {
   const list = [];
   const add = (id, cfg) => { const el = document.getElementById(id); if (el) list.push(new Chart(el, cfg)); };
   const color = n => colorOf(s.unitNames, n);
-  const cur = s.months.at(-1), prev = s.months.at(-2);
+  const cur = s.months.at(-1);
   const W = s.done, L = W.map(w => w.label);
 
   // 손익 구성 (기존, 변경 없음)
@@ -326,20 +339,26 @@ function draw(s, inv) {
       scales: { x: { grid: { display: false } }, y: { min: 0, ticks: { callback: v => v + '%' } } } },
   });
 
+  // 사업아이템별 손익 — 세로 막대, 입력된 모든 달 표시 (예: 9월·10월·11월)
   {
-    const ds = [];
-    if (prev) ds.push({ label: prev.label, data: prev.units.map(u => u.profit), backgroundColor: COL.prev });
-    ds.push({ label: cur.label, data: cur.units.map(u => u.profit), backgroundColor: COL.gold });
+    const n = s.months.length;
+    const ds = s.months.map((m, i) => ({
+      label: m.label, data: m.units.map(u => u.profit), backgroundColor: monthBarColor(i, n),
+    }));
     add('cUnitPL', {
       type: 'bar',
       data: { labels: cur.units.map(u => u.name), datasets: ds },
-      options: { indexAxis: 'y', aspectRatio: 1.05,
-        plugins: { tooltip: { callbacks: { label: c => ` ${c.dataset.label}  ${won(c.parsed.x)}` } } },
-        scales: { x: { ticks: { callback: man }, grid: zeroGrid() }, y: { grid: { display: false } } } },
+      options: { aspectRatio: 1.05,
+        plugins: { tooltip: tipWon() },
+        scales: {
+          x: { grid: { display: false }, ticks: { autoSkip: false, maxRotation: 45, minRotation: 0 } },
+          y: { ...yMan(), grid: zeroGrid() },
+        } },
     });
   }
 
-  for (const [id, m] of [['cPiePrev', prev], ['cPieCur', cur]]) {
+  // 순매출 비중 — 왼쪽 전월누계, 오른쪽 당월 (마이너스 순매출 항목은 도넛에서 제외)
+  for (const [id, m] of [['cPiePrev', s.prevCum], ['cPieCur', cur]]) {
     if (!m) continue;
     const us = m.units.filter(u => u.net > 0);
     const tot = us.reduce((a, u) => a + u.net, 0);
@@ -462,7 +481,7 @@ function App() {
 
   const cur = view?.months.at(-1), prev = view?.months.at(-2);
   const vis = t => (tab === t ? '' : 'hidden');
-  const pieTotal = m => m ? m.units.filter(u => u.net > 0).reduce((a, u) => a + u.net, 0) : 0;
+  const netTotal = m => m ? m.units.reduce((a, u) => a + u.net, 0) : 0;   // 도넛 아래 금액: 마이너스 포함 실제 순매출 합계
   const range = m => m ? `${m.weeks[0].period.split('~')[0]} ~ ${m.weeks.at(-1).period.split('~')[1]}` : '';
   const latestInv = inv && inv.months && inv.months.length ? inv.months.at(-1) : null;
   const invLegendItems = inv ? ['전체', ...inv.brands, `업계 평균(${INV_BENCHMARK.toFixed(1)}회)`] : [];
@@ -544,8 +563,18 @@ function App() {
                 <div className="card"><h2>사업아이템별 손익</h2><canvas id="cUnitPL" /></div>
                 <div className="card"><h2>순매출 비중</h2>
                   <div className="pies">
-                    <div><canvas id="cPiePrev" /><p>{prev ? `${prev.label} · ${won(pieTotal(prev))}` : ''}</p></div>
-                    <div><canvas id="cPieCur" /><p>{`${cur.label} · ${won(pieTotal(cur))}`}</p></div>
+                    {view.prevCum && (
+                      <div>
+                        <h3>전월누계</h3>
+                        <canvas id="cPiePrev" />
+                        <p>{`${view.prevCum.range} · ${won(netTotal(view.prevCum))}`}</p>
+                      </div>
+                    )}
+                    <div>
+                      <h3>{cur.label}</h3>
+                      <canvas id="cPieCur" />
+                      <p>{`${cur.label} · ${won(netTotal(cur))}`}</p>
+                    </div>
                   </div>
                 </div>
                 <div className="card wide">
