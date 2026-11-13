@@ -43,7 +43,9 @@ main{max-width:1440px;margin:0 auto;padding:22px 32px 40px}
 .pies{display:grid;grid-template-columns:1fr 1fr;gap:8px;text-align:center}
 .pies h3{margin:4px 0 10px;font-size:12.5px;font-weight:600;color:var(--txt)}
 .pies p{color:var(--sub);margin:8px 0 0;font-size:11px}
-.stamp{color:var(--mute);text-align:right;font-size:10px;margin-top:16px}
+.hr{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.stampTop{color:var(--mute);font-size:10.5px;letter-spacing:.2px}
+.stampInv{color:var(--mute);text-align:right;font-size:10.5px;margin-top:12px}
 .invbig{font-size:12px;font-weight:600;color:var(--txt);margin-right:6px}
 .invnote{color:var(--mute);font-size:10.5px;margin-top:10px;line-height:1.5}
 @media(max-width:1000px){.grid{grid-template-columns:1fr}.kpi{grid-template-columns:1fr 1fr}}
@@ -56,6 +58,7 @@ const MONTH_GRAYS = ['#5c6170', '#7d828a', '#4b5262', '#a7abb2'];   // 전전월
 const colorOf = (names, n) => PAL[names.indexOf(n) % PAL.length];
 const won = v => Math.round(v).toLocaleString('ko-KR');
 const man = v => Math.round(v / 1e4).toLocaleString('ko-KR') + '만';
+const fmtT = t => (t ? new Date(t).toLocaleString('ko-KR') : '');
 const KPI = [['매출', 'sales'], ['순매출', 'net'], ['인건비', 'labor'], ['경비', 'exp'], ['순익', 'profit']];
 
 const FS_URL = 'https://firestore.googleapis.com/v1/projects/biz-plan-1022/databases/(default)/documents/biz/latest';
@@ -190,6 +193,7 @@ async function fetchInvData() {
     const raw = fsFieldsToObj(json.fields);
     if (!raw.months || !raw.months.length) return null;
     return {
+      t: raw.updatedAt,
       brands: raw.brands || [],
       months: raw.months.map(m => ({ label: m.label, turnover: m.turnover, byBrand: m.byBrand || {} })),
     };
@@ -492,11 +496,14 @@ function App() {
       <style>{CSS}</style>
       <header>
         <div><div className="eb">WE GROUP</div><h1>Business Plan Summary</h1></div>
-        <nav>
-          {['summary', 'weekly', 'business'].map(t => (
-            <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{t.toUpperCase()}</button>
-          ))}
-        </nav>
+        <div className="hr">
+          {view && view.t && <div className="stampTop">비즈니스 플랜 데이터 기준 {fmtT(view.t)}</div>}
+          <nav>
+            {['summary', 'weekly', 'business'].map(t => (
+              <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{t.toUpperCase()}</button>
+            ))}
+          </nav>
+        </div>
       </header>
 
       <main>
@@ -603,12 +610,11 @@ function App() {
                     </div>
                     <canvas id="cInvByBrand" />
                     <div className="invnote">재고자산 회전율은 지금 보유한 재고가 전부 팔리는 데 걸리는 기간을 뜻합니다. 연 1회전이면 재고 전체가 소진되는 데 약 1년, 연 2회전이면 약 6개월이 걸린다는 의미입니다. 숫자가 높을수록 재고가 빠르게 소진된다는 의미입니다. 보유 재고가 없는 구간은 선이 끊겨 표시됩니다.</div>
+                    {inv.t && <div className="stampInv">재고 수불부 데이터 기준 {fmtT(inv.t)}</div>}
                   </div>
                 )}
               </div>
             </section>
-
-            <p className="stamp">데이터 기준 {new Date(view.t).toLocaleString('ko-KR')}</p>
           </>
         )}
       </main>
