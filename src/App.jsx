@@ -179,7 +179,7 @@ async function fetchData() {
     weeks: raw.weeks.map(w => ({
       label: w.l, month: w.m, period: w.p, days: days(w.p),
       sales: w.s, net: w.n, labor: w.lb, exp: w.e, profit: w.pf,
-      units: raw.names.map((name, i) => ({ name, net: w.u[i].net, profit: w.u[i].profit })),
+      units: raw.names.map((name, i) => ({ name, net: w.u[i].net, profit: w.u[i].profit, sales: w.u[i].sales ?? 0 })),
     })),
   };
 }
@@ -210,12 +210,12 @@ function summarize(d) {
     let m = months.find(x => x.month === w.month);
     if (!m) {
       m = { month: w.month, label: w.month + '월', sales: 0, net: 0, labor: 0, exp: 0, profit: 0, days: 0, weeks: [],
-        units: d.unitNames.map(n => ({ name: n, net: 0, profit: 0 })) };
+        units: d.unitNames.map(n => ({ name: n, net: 0, profit: 0, sales: 0 })) };
       months.push(m);
     }
     ['sales', 'net', 'labor', 'exp', 'profit', 'days'].forEach(k => m[k] += w[k]);
     m.weeks.push(w);
-    w.units.forEach((u, i) => { m.units[i].net += u.net; m.units[i].profit += u.profit; });
+    w.units.forEach((u, i) => { m.units[i].net += u.net; m.units[i].profit += u.profit; m.units[i].sales += u.sales; });
   });
 
   /* 전월누계: 당월을 뺀 모든 달의 사업아이템별 순매출 합계 (예: 11월이면 9월~10월) */
@@ -226,7 +226,8 @@ function summarize(d) {
   } : null;
 
   const trendUnits = d.unitNames.filter((n, i) => done.some(w => w.units[i].net > 0));
-  return { done, pending, months, prevCum, unitNames: d.unitNames, trendUnits, t: d.t };
+  const salesUnits = d.unitNames.filter((n, i) => done.some(w => w.units[i].sales > 0));
+  return { done, pending, months, prevCum, unitNames: d.unitNames, trendUnits, salesUnits, t: d.t };
 }
 
 /* ================= 그래프 ================= */
@@ -375,22 +376,23 @@ function draw(s, inv) {
     });
   }
 
+  // BUSINESS 탭 — 사업아이템별 주차 매출 추이(왼쪽) · 순매출 추이(오른쪽)
   if (W.length) {
-    const ds = s.trendUnits.map(n => {
+    const unitLine = (names, key) => names.map(n => {
       const i = s.unitNames.indexOf(n);
       return {
-        label: n, data: W.map(w => w.units[i].net),
+        label: n, data: W.map(w => w.units[i][key]),
         borderColor: color(n), backgroundColor: color(n), pointBackgroundColor: color(n),
         cubicInterpolationMode: 'monotone', fill: false, pointRadius: 3, borderWidth: 2,
       };
     });
-    add('cUnitTrend', {
-      type: 'line',
-      data: { labels: L, datasets: ds },
-      options: { aspectRatio: 3.1, interaction: { mode: 'index', intersect: false },
-        plugins: { legend: { display: false }, tooltip: tipWon() },
-        scales: { x: { grid: { display: false } }, y: { ...yMan(), grid: zeroGrid() } } },
-    });
+    const trendOpts = { aspectRatio: 1.6, interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { display: false }, tooltip: tipWon() },
+      scales: { x: { grid: { display: false } }, y: { ...yMan(), grid: zeroGrid() } } };
+    if (s.salesUnits.length) {
+      add('cUnitSales', { type: 'line', data: { labels: L, datasets: unitLine(s.salesUnits, 'sales') }, options: trendOpts });
+    }
+    add('cUnitTrend', { type: 'line', data: { labels: L, datasets: unitLine(s.trendUnits, 'net') }, options: trendOpts });
   }
 
   // BUSINESS 탭 — 재고자산 회전율 (Chart.js 기본 범례 끔 — 범례는 아래 HTML 버튼으로 별도 렌더링)
@@ -427,7 +429,8 @@ function App() {
   const [view, setView] = useState(null);
   const [inv, setInv] = useState(null);
   const [msg, setMsg] = useState('불러오는 중...');
-  const [off, setOff] = useState([]);
+  const [offSales, setOffSales] = useState([]);
+  const [offNet, setOffNet] = useState([]);
   const [invOff, setInvOff] = useState([]);
   const charts = useRef([]);
 
@@ -450,25 +453,31 @@ function App() {
     if (!view) return;
     charts.current.forEach(c => c.destroy());
     charts.current = draw(view, inv);
-    setOff([]);
+    setOffSales([]);
+    setOffNet([]);
     setInvOff([]);
     return () => charts.current.forEach(c => c.destroy());
   }, [view, inv]);
 
   useEffect(() => { charts.current.forEach(c => c.resize()); }, [tab]);
 
-  const toggleUnit = n => {
-    const ch = Chart.getChart('cUnitTrend'); if (!ch) return;
+  /* 사업아이템 추이 카드 범례 (매출·순매출 각각 독립) */
+  const toggleLine = (id, setOff) => n => {
+    const ch = Chart.getChart(id); if (!ch) return;
     const i = ch.data.datasets.findIndex(d => d.label === n); if (i < 0) return;
     const visible = ch.isDatasetVisible(i);
     ch.setDatasetVisibility(i, !visible); ch.update();
     setOff(prev => visible ? [...prev, n] : prev.filter(x => x !== n));
   };
-  const showAll = () => {
-    const ch = Chart.getChart('cUnitTrend'); if (!ch) return;
+  const showAllLine = (id, setOff) => () => {
+    const ch = Chart.getChart(id); if (!ch) return;
     ch.data.datasets.forEach((_, i) => ch.setDatasetVisibility(i, true)); ch.update();
     setOff([]);
   };
+  const toggleSales = toggleLine('cUnitSales', setOffSales);
+  const showAllSales = showAllLine('cUnitSales', setOffSales);
+  const toggleNet = toggleLine('cUnitTrend', setOffNet);
+  const showAllNet = showAllLine('cUnitTrend', setOffNet);
 
   const toggleInv = n => {
     const ch = Chart.getChart('cInvByBrand'); if (!ch) return;
@@ -584,19 +593,41 @@ function App() {
                     </div>
                   </div>
                 </div>
-                <div className="card wide">
-                  <h2>사업아이템별 주차 순매출 추이</h2>
+
+                <div className="card">
+                  <h2>사업아이템별 주차 매출 추이 <span>단위 만원</span></h2>
+                  {view.salesUnits.length > 0 ? (
+                    <>
+                      <div className="lg">
+                        <button className="all" onClick={showAllSales}>전체</button>
+                        {view.salesUnits.map(n => (
+                          <button key={n} className={offSales.includes(n) ? 'off' : ''} onClick={() => toggleSales(n)}>
+                            <i style={{ background: colorOf(view.unitNames, n) }} />{n}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="lghint">항목을 한 번 누르면 숨김 · 다시 누르면 표시 · 각 선은 실제 값 그대로(쌓지 않음)</div>
+                      <canvas id="cUnitSales" />
+                    </>
+                  ) : (
+                    <div className="center" style={{ padding: '60px 0' }}>사업아이템별 매출 데이터가 아직 반영되지 않았습니다. 시트를 한 번 수정하면 반영됩니다.</div>
+                  )}
+                </div>
+
+                <div className="card">
+                  <h2>사업아이템별 주차 순매출 추이 <span>단위 만원</span></h2>
                   <div className="lg">
-                    <button className="all" onClick={showAll}>전체</button>
+                    <button className="all" onClick={showAllNet}>전체</button>
                     {view.trendUnits.map(n => (
-                      <button key={n} className={off.includes(n) ? 'off' : ''} onClick={() => toggleUnit(n)}>
+                      <button key={n} className={offNet.includes(n) ? 'off' : ''} onClick={() => toggleNet(n)}>
                         <i style={{ background: colorOf(view.unitNames, n) }} />{n}
                       </button>
                     ))}
                   </div>
-                  <div className="lghint">항목을 한 번 누르면 숨김 · 다시 누르면 표시 · 전체는 모두 표시 — 각 선은 실제 값 그대로(쌓지 않음)</div>
+                  <div className="lghint">항목을 한 번 누르면 숨김 · 다시 누르면 표시 · 각 선은 실제 값 그대로(쌓지 않음)</div>
                   <canvas id="cUnitTrend" />
                 </div>
+
                 {latestInv && (
                   <div className="card wide">
                     <h2><span className="invbig">{latestInv.turnover != null ? latestInv.turnover.toFixed(1) + '회' : '—'}</span>재고자산 회전율 — 브랜드별 <span>와치베이(구매일 기준) · 업계 평균 {INV_BENCHMARK.toFixed(1)}회</span></h2>
